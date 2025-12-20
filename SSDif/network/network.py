@@ -264,24 +264,11 @@ class Network(nn.Module):
 
         #self.feature_gnn = ImageFeatureExtractor(input_channels=3, hidden_dim=64, output_dim=32, num_gnn_layers=3)
         # 初始化 EMA 模块
-        self.vrwkv_c = VRWKV_ChannelMix(n_embd=256, channel_gamma=1/4, shift_pixel=1, hidden_rate=2, key_norm=True) 
-        self.cbam=CBAM(256, ratio=16, kernel_size=7)
         self.ema = EMA(channels=256, factor=8)  # 在上采样和下采样之间使用
         #self.bottam_layer = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=3, stride=1, padding=1)
         self.bottam_layer = nn.Conv2d(in_channels=768, out_channels=256, kernel_size=3, stride=1, padding=1)
-        '''
-        self.bottam_layer = nn.Sequential(
-            nn.Conv2d(768, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            #nn.ReLU(inplace=True)
-            telu
-        )
-        '''
-        
-        
         self.multis = MultiScaleEdgeFusionModule(in_channels=256, out_channels=256)
         # ========================================================================
-
 
         # layers
         self.down = nn.ModuleList([])
@@ -306,13 +293,8 @@ class Network(nn.Module):
             )
 
         #self.transfusion=FeatureFusionTransformer(embed_dim=256, num_heads=16)#num_heads:多头注意力机制中的头数，用于捕获不同子空间的信息，增强表达能力
-        self.fusionmamba=FusionMamba(dim=256, depth=2, final=True , dropout_prob=0.3)
-        #self.drop  = nn.Dropout2d(p_drop=0.2)
+        self.fusionmamba=FusionMamba(dim=128, depth=8, final=True , dropout_prob=0.3)
         self.drop = nn.Dropout(p=0.25)
-        #self.fus1=FusionMamba(dim=64, depth=1, final=True , dropout_prob=0)
-        #self.fus2=FusionMamba(dim=128, depth=1, final=True , dropout_prob=0)
-        #self.fus3=FusionMamba(dim=256, depth=1, final=True , dropout_prob=0)
-
 
         # decoder
         for i in range(len(dim_mults)-1): # each ublock
@@ -336,7 +318,6 @@ class Network(nn.Module):
 
         # final
 
-
         self.final = nn.Sequential(ResNetBlock(self.dims[0]*2, self.dims[0], groups=resnet_block_groups),
                                    ResNetBlock(self.dims[0], self.dims[0], groups=resnet_block_groups),
                                    nn.Conv2d(self.dims[0], n_classes, 1))
@@ -357,20 +338,12 @@ class Network(nn.Module):
         img_emb = resnetblock1(img, t)
         img_emb = resnetblock2(img_emb)
         img_emb = resnetblock3(img_emb)
-
-        # ====================================
-
-        # ====================================
-        # add embeddings together
-        x = seg_emb + img_emb
         
-        # ====================================
-        # skip connections
+        x = seg_emb + img_emb
+    
         h = []
         k=0
         
-        #=============yuan================================
-        
         # downsample(seg+img)
         for encoder_c,resnetblock1, resnetblock2, attn, downsample,FusionMamba in self.down:
             x = resnetblock1(x, t)
@@ -378,98 +351,10 @@ class Network(nn.Module):
             x = attn(x)
             h.append(x)
             x = downsample(x)
-        '''
-        #===================================================
-
-        #==================mambaencoder================================
-        
-        # downsample(seg+img)
-        for encoder_c,resnetblock1, resnetblock2, attn, downsample,FusionMamba in self.down:
-            x = resnetblock1(x, t)
-            x = resnetblock2(x)
-            x = attn(x)
-            if k == 0:
-                z=x
-            k+=1
-            y= encoder_c(z)
-            h.append(x)
-            x = downsample(x)
-            z=x
-            x =FusionMamba(x, y)
-        '''
-        #==============================================================
-
-        #============MCBA attition=====================
-        '''
-        y=self.cbam(x)
-        p=self.multis(x)
-        z=y+p
-        x=torch.cat((x, z), dim=1)
-        x=self.bottam_layer(x)
-        x = self.ema(x)  # 用于增强特征
-        '''
-        # ==============================
-        
-        #============Vrwkv_c+Mcales attition: one:串=====================
-        '''
-        #print("x:", x.shape)
-        z=x
-        # Prepare for MHSA: (B, C, H, W) -> (B, N, C) where N=H*W
-        B, C, H, W = x.shape
-        x = x.view(B, C, -1).permute(0, 2, 1)  # (B, N, C)
-        #print("Input shape:", x.shape)
-        
-        #x=self.vrwkv_c(x, patch_resolution=(8, 8))
-        x=self.vrwkv_c(x)
-        
-        # Step 3: Reshape back to (B, C, H, W)
-        B, n_patch, hidden = x.size()  # reshape from (B, n_patch, hidden) to (B, h, w, hidde
-        g, k = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))
-        x = x.permute(0, 2, 1)
-        attn_output = x.contiguous().view(B, hidden, g, k)
-        x=z + attn_output
-        #print("x:", attn_output.shape)  # 输出张量的形状
-        
-        #p=x
-        x=self.multis(x)
-        #x=x+p
-        x = self.ema(x)  # 用于增强特征
-        '''
-        # ===============================================
-        
-        #============Vrwkv_c+Mcales attition: two:并=====================
-        
-        #print("x:", x.shape)
-        z=x
-        p=x
-        # Prepare for MHSA: (B, C, H, W) -> (B, N, C) where N=H*W
-        B, C, H, W = x.shape
-        x = x.view(B, C, -1).permute(0, 2, 1)  # (B, N, C)
-        #print("Input shape:", x.shape)
-        
-        #x=self.vrwkv_c(x, patch_resolution=(8, 8))
-        x=self.vrwkv_c(x)
-        
-        # Step 3: Reshape back to (B, C, H, W)
-        B, n_patch, hidden = x.size()  # reshape from (B, n_patch, hidden) to (B, h, w, hidde
-        g, k = int(np.sqrt(n_patch)), int(np.sqrt(n_patch))
-        x = x.permute(0, 2, 1)
-        attn_output = x.contiguous().view(B, hidden, g, k)
-        #x=z + attn_output
-        #print("x:", attn_output.shape)  # 输出张量的形状
-        
-        #p=x
-        w=self.multis(p)
-        x=torch.cat((z,attn_output,w), dim=1)
-        x=self.bottam_layer(x)
-        #x=x+p
-        
+      
         x = self.ema(x)  # 用于增强特征
         
         #x=self.drop(x)#========VRWKV===========
-       
-        # ===============================================
-        
 
         # upsample
 
