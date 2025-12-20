@@ -1,2 +1,2 @@
 # EDiffusion
-After the paper is accepted, the code will be uploaded as soon as possible.
+We will gradually update and improve the usage guide in the future.
