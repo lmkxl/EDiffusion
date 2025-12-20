@@ -1,0 +1,5 @@
+nohup: 忽略输入
+==== 划分完成 ====
+总配对样本数: 1000
+训练集: 800  | 测试集: 200  | 训练占比: 0.800
+输出目录: /exp/home/mingkai.liu/data/Kvasir_SEG_split
